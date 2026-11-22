@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Oil Wheel</title>
+<!-- Install-as-an-app bits: the manifest is the app's "ID card" (name, icon, colours, portrait-only);
+     the icons are what shows on your phone's home screen and in the browser tab. -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#120a1f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<style>
+  html,body{margin:0;height:100%;background:#120a1f;overflow:hidden;touch-action:none;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#e9e2f7;-webkit-user-select:none;user-select:none}
+  #stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+  canvas{display:block;will-change:transform}
+  #hud{position:fixed;inset:0;pointer-events:none;transition:transform .45s ease}
+  #hud.flipped{transform:rotate(180deg)}
+  .row{position:absolute;left:0;right:0;display:flex;justify-content:center;gap:5px;padding:0 6px;flex-wrap:wrap}
+  .top{top:max(6px,env(safe-area-inset-top))}
+  .bottom{bottom:max(8px,env(safe-area-inset-bottom));pointer-events:auto;align-items:center}
+  .chip{background:rgba(24,12,40,.86);border:1px solid rgba(190,150,255,.3);border-radius:8px;
+    padding:3px 7px;font-size:9px;line-height:1.25;text-align:center;min-width:50px;letter-spacing:.06em}
+  .chip b{display:block;font-size:15px;color:#8fc4ff;font-weight:700;letter-spacing:0}
+  .chip.time b{color:#fff}
+  #bar{height:3px;background:#3a2a55;border-radius:2px;margin-top:2px;overflow:hidden}
+  #barFill{height:100%;width:0;background:linear-gradient(90deg,#3d7dff,#a6d0ff)}
+  button{font:inherit;font-size:12px;color:#fff;background:#6d3fd0;border:0;border-radius:10px;
+    padding:9px 13px;font-weight:700;cursor:pointer}
+  button.ghost{background:rgba(24,12,40,.88);color:#e9e2f7;border:1px solid rgba(190,150,255,.4)}
+  #tiltStat{font-size:11px;padding:8px 10px;border-radius:10px;border:1px solid rgba(190,150,255,.4);background:rgba(24,12,40,.88)}
+  #tiltStat.live{color:#7dffb0;border-color:rgba(125,255,176,.5)}
+  #tiltStat.dead{color:#ffb37d;border-color:rgba(255,179,125,.6)}
+  .card{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(84vw,320px);max-height:76vh;overflow:auto;
+    background:rgba(18,9,32,.95);border:1px solid rgba(190,150,255,.55);border-radius:14px;padding:14px 16px;
+    font-size:12.5px;line-height:1.45;text-align:center;pointer-events:auto;box-shadow:0 10px 40px rgba(0,0,0,.6)}
+  .card.hide{display:none}
+  #toast{position:absolute;left:50%;top:22%;transform:translate(-50%,-50%) scale(.9);font-size:20px;font-weight:800;letter-spacing:.08em;
+    color:#fff;text-shadow:0 0 14px #3d7dff,0 0 4px #000;opacity:0;transition:opacity .25s,transform .25s;white-space:nowrap;text-align:center}
+  #toast.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
+  #toast small{display:block;font-size:12px;color:#bcd8ff}
+  .card h1{margin:0 0 6px;font-size:16px;color:#8fc4ff;letter-spacing:.1em}
+  .card h2{margin:10px 0 4px;font-size:12px;color:#c8a8ff;letter-spacing:.1em}
+  .card table{width:100%;border-collapse:collapse;font-size:11.5px}
+  .card td,.card th{padding:3px 2px;border-bottom:1px solid rgba(190,150,255,.15)}
+  .card th{color:#c8a8ff;font-weight:600;font-size:10px}
+  .card tr.me td{color:#8fc4ff;font-weight:700}
+  .big{font-size:26px;color:#fff;font-weight:700;margin:4px 0}
+  .stats{display:flex;justify-content:space-around;margin:6px 0}
+  .stats div b{display:block;color:#8fc4ff;font-size:15px}
+  .muted{color:#a796c4;font-size:11px}
+  .card button{margin-top:10px}
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="c"></canvas></div>
+<div id="hud">
+  <div class="row top">
+    <div class="chip time">SPIN TIME<b id="time">0.0</b></div>
+    <div class="chip">RPM<b id="rpm">0</b></div>
+    <div class="chip">POWER<b id="pow">0</b><div id="bar"><div id="barFill"></div></div></div>
+    <div class="chip">HEAT<b id="surge">0%</b></div>
+    <div class="chip">ENERGY<b id="energy">0</b></div>
+    <div class="chip">REVS<b id="revs">0</b></div>
+  </div>
+  <div class="row bottom">
+    <span id="tiltStat" class="dead">TILT: waiting…</span>
+    <button id="flip" class="ghost">Flip ↻</button>
+    <button id="scoresBtn" class="ghost">Scores</button>
+    <button id="reset" class="ghost">Reset</button>
+  </div>
+
+  <div id="toast"></div>
+  <div id="startCard" class="card">
+    <h1>OIL WHEEL</h1>
+    <div>Flip your phone upside down to start a run.</div>
+    <div style="margin-top:6px">The oil spins the paddle wheel, and it coasts on after the oil passes. <b>The timer only runs while the wheel spins.</b></div>
+    <div style="margin-top:6px">The oil starts <b>cold</b>, like a lava lamp — thick, slow, clumped in blobs. Every pass through the wheel warms it up (<b>HEAT</b>): it thins out, splits into smaller blobs and rises faster. A <b>PERFECT FLIP</b> (right as the oil finishes arriving) adds a little extra heat.</div>
+    <div class="muted" style="margin-top:8px" id="startTilt">Checking motion sensor…</div>
+    <button id="startBtn">Got it</button>
+    <button id="installBtn" class="ghost" hidden>Install app</button>
+  </div>
+
+  <div id="overCard" class="card hide">
+    <h1>RUN OVER</h1>
+    <div class="big" id="oTime">0.0s</div>
+    <div id="oRank" class="muted"></div>
+    <div class="stats">
+      <div>ENERGY<b id="oEnergy">0</b></div>
+      <div>REVS<b id="oRevs">0</b></div>
+      <div>PEAK RPM<b id="oPeak">0</b></div>
+      <div>PERFECT<b id="oFlips">0</b></div>
+    </div>
+    <h2>LONGEST RUNS</h2>
+    <table id="oTable"></table>
+    <div class="muted" style="margin-top:8px">Flip your phone to start a new run.</div>
+    <button id="overClose" class="ghost">Close</button>
+  </div>
+
+  <div id="scoreCard" class="card hide">
+    <h1>SCOREBOARD</h1>
+    <table id="sTable"></table>
+    <button id="scoreClose" class="ghost">Close</button>
+    <button id="scoreClear" class="ghost">Clear</button>
+  </div>
+
+  <div id="helpCard" class="card hide">
+    <h1>NO TILT SIGNAL</h1>
+    <div>This browser isn't giving the page your phone's motion sensor. Usually that's because the file was opened from Google Drive or a file viewer instead of a web address.</div>
+    <div style="margin-top:6px">Put it on an <b>https://</b> link (for example GitHub Pages or Netlify Drop) and open that link in Chrome. You can still play with the <b>Flip ↻</b> button in the meantime.</div>
+    <button id="helpClose" class="ghost">OK</button>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+// ================= WORLD (logical units, portrait 400 x 900) =================
+const W = 400, H = 900;
+const R = 5, N = 150;
+const BUOY = 2400, DRAG = 4, COH = 260, WALL_F = 0.997, VMAX = 450;
+const SUB = 1/180;
+
+const tankA = [[20,20],[380,20],[380,115],[343,150],[317,150],[20,95]];
+const tankB = [[20,880],[20,762],[32,750],[52,750],[380,805],[380,880]];
+const HC = {x:300, y:240};
+// mill race: oil runs down a straight channel on the wheel's right side; the rest of the wheel sits in a dry recess
+const HR = 54;
+const WR = 48, HUB = 12, NP = 12, PT = 3;
+// free-spinning wheel: heavy, low drag so it coasts down slowly
+// free-spinning paddle wheel: heavy, low drag so it coasts down slowly after the oil passes
+const INERTIA = 80000, W_LIN = 0.05, W_QUAD = 0.002, W_COULOMB = 0.02;
+const tubes = [
+  // every joint shares one centre line (x=330) so no rounded end bulges past a port and traps oil
+  {w:13, pts:[[330,135],[330,198]]},
+  {w:18, pts:[[330,198],[330,282]]},
+  // narrow coil: wide, shallow rows (~5 deg) joined by short vertical switchbacks
+  {w:10, pts:[[330,282],[330,318],[42,353],[42,381],[358,409],[358,437],[42,465],[42,493],[358,521],[358,549],[42,577],[42,605],[358,633],[358,661],[42,689],[42,762]]}
+];
+
+function prepPoly(pts){
+  let cx=0, cy=0; pts.forEach(p=>{cx+=p[0]; cy+=p[1];}); cx/=pts.length; cy/=pts.length;
+  return pts.map((a,i)=>{
+    const b=pts[(i+1)%pts.length];
+    let nx=b[1]-a[1], ny=-(b[0]-a[0]); const l=Math.hypot(nx,ny); nx/=l; ny/=l;
+    if ((cx-a[0])*nx+(cy-a[1])*ny>0){ nx=-nx; ny=-ny; }
+    return [a[0],a[1],nx,ny];
+  });
+}
+const polys=[prepPoly(tankA),prepPoly(tankB)];
+const segs=[];
+tubes.forEach(t=>{ for(let i=0;i<t.pts.length-1;i++) segs.push([t.pts[i][0],t.pts[i][1],t.pts[i+1][0],t.pts[i+1][1],t.w]); });
+
+function sdf(x,y){
+  let d=1e9;
+  for (const pl of polys){ let m=-1e9; for (const p of pl){ const v=(x-p[0])*p[2]+(y-p[1])*p[3]; if(v>m)m=v; } if(m<d)d=m; }
+  for (const s of segs){
+    const ax=s[0],ay=s[1],bx=s[2]-ax,by=s[3]-ay;
+    let t=((x-ax)*bx+(y-ay)*by)/(bx*bx+by*by); t=t<0?0:t>1?1:t;
+    const v=Math.hypot(x-ax-bx*t,y-ay-by*t)-s[4]; if(v<d)d=v;
+  }
+  return d;
+}
+
+// ================= STATE =================
+const px=new Float32Array(N),py=new Float32Array(N),vx=new Float32Array(N),vy=new Float32Array(N);
+let theta=0, omega=0, stepWork=0, powerS=0, meanSpeed=0, snapT=0;
+const snapX=new Float32Array(N), snapY=new Float32Array(N);
+const gDisp={x:0,y:1}, gRaw={x:0,y:1};
+let phi=0, phiTarget=0, phiFrom=0, phiT=1;
+// HEAT: the oil starts cold like a lava lamp -- thick, clumpy, sluggish. Every blob that
+// passes the paddles warms it; warm oil is thinner, separates into smaller blobs and rises harder.
+let heat=0, settledFor=0, arrived=0;
+const wheelSide=new Int8Array(N);
+const grp=new Int32Array(N);          // which blob each droplet belongs to
+const gsize=new Map(), merges=[];
+const PASSES_TO_HOT=6;
+let hudFlipped=false, side=1;
+
+// game
+let state='ready', run=null, stillTime=0;
+
+function canvasGravity(){
+  const c=Math.cos(-phi), s=Math.sin(-phi);
+  return {x:gDisp.x*c-gDisp.y*s, y:gDisp.x*s+gDisp.y*c};
+}
+// oil starts as separate lava-lamp blobs, not one solid layer
+function fillTank(top){
+  const ring=[[0,0]];
+  for (let k=0;k<6;k++) ring.push([Math.cos(k*Math.PI/3)*10,Math.sin(k*Math.PI/3)*10]);
+  for (let k=0;k<12;k++) ring.push([Math.cos(k*Math.PI/6+0.26)*19,Math.sin(k*Math.PI/6+0.26)*19]);
+  const centres=[];
+  for (let r=0;r<3;r++) for (let c=0;c<5;c++) centres.push([52+c*72+(r%2)*30, 42+r*30]);
+  let n=0;
+  outer: for (let pass=0; pass<3; pass++) for (const [cx,cy0] of centres){
+    for (let k=0;k<ring.length;k++){
+      if (n>=N) break outer;
+      if ((k>=7) !== (pass>0)) continue;          // cores first, then outer rings
+      const x=cx+ring[k][0]+pass*1.3, cy=cy0+ring[k][1];
+      const y= top ? cy : H-cy;
+      let ok=sdf(x,y)<-R-0.5;
+      for (let j=0;j<n&&ok;j++) if ((px[j]-x)**2+(py[j]-y)**2<81) ok=false;
+      if (ok){ px[n]=x; py[n]=y; vx[n]=0; vy[n]=0; grp[n]=centres.indexOf(centres.find(c=>c[0]===cx&&c[1]===cy0)); n++; }
+    }
+  }
+  for (let row=0; n<N && row<40; row++) for (let col=0; col<40&&n<N; col++){   // any leftovers
+    const x=27+col*10.6, y0=27+row*9.4, y=top?y0:H-y0;
+    let ok=sdf(x,y)<-R-0.5; for (let j=0;j<n&&ok;j++) if ((px[j]-x)**2+(py[j]-y)**2<81) ok=false;
+    if (ok){ px[n]=x; py[n]=y; vx[n]=0; vy[n]=0; grp[n]=500+n; n++; }
+  }
+  for (let i=0;i<N;i++) wheelSide[i]=0;
+}
+
+// ================= PHYSICS =================
+const pc=new Float32Array(NP), ps=new Float32Array(NP);
+function step(dt){
+  const g=canvasGravity();
+  const mult=0.8+1.2*heat;                 // cold oil is barely buoyant; hot oil rises hard
+  const drag=DRAG*(1.3-0.55*heat);         // cold oil is thick
+  const coh=COH*(2.4-1.9*heat);            // cold oil clings into big blobs; hot oil breaks apart
+  const ax=-g.x*BUOY*mult, ay=-g.y*BUOY*mult, damp=Math.exp(-drag*dt);
+  for (let i=0;i<N;i++){
+    let a=(vx[i]+ax*dt)*damp, b=(vy[i]+ay*dt)*damp;
+    const sp=Math.hypot(a,b); if (sp>VMAX){ a*=VMAX/sp; b*=VMAX/sp; }
+    vx[i]=a; vy[i]=b; px[i]+=a*dt; py[i]+=b*dt;
+  }
+  const D=2*R, Dg=D*(1.3-0.25*heat), C=(3.2-0.6*heat)*R, C2=C*C;
+  const maxBlob=Math.round(16-10*heat);     // warm oil holds together in smaller blobs
+  gsize.clear(); for (let i=0;i<N;i++) gsize.set(grp[i],(gsize.get(grp[i])||0)+1);
+  merges.length=0;
+  for (let i=0;i<N;i++){
+    const xi=px[i], yi=py[i];
+    for (let j=i+1;j<N;j++){
+      const dx=px[j]-xi; if (dx>C||dx<-C) continue;
+      const dy=py[j]-yi; if (dy>C||dy<-C) continue;
+      const d2=dx*dx+dy*dy; if (d2>=C2||d2<1e-6) continue;
+      const d=Math.sqrt(d2), nx=dx/d, ny=dy/d;
+      const same=grp[i]===grp[j];
+      if (!same && d<Dg){
+        // separate blobs keep a soft film of water between them (soft, so they never jam a channel)
+        if (d>=D){ const o=(Dg-d)*0.08; px[i]-=nx*o; py[i]-=ny*o; px[j]+=nx*o; py[j]+=ny*o; continue; }
+        // touching blobs: cold wax likes to merge back into one blob, up to a size
+        if (Math.random()<2*dt && (gsize.get(grp[i])||0)+(gsize.get(grp[j])||0)<=maxBlob) merges.push(grp[j],grp[i]);
+      }
+      if (d<D){
+        const o=(D-d)*0.5;
+        px[i]-=nx*o; py[i]-=ny*o; px[j]+=nx*o; py[j]+=ny*o;
+        const rn=(vx[j]-vx[i])*nx+(vy[j]-vy[i])*ny;
+        if (rn<0){ const k=rn*0.5; vx[i]+=nx*k; vy[i]+=ny*k; vx[j]-=nx*k; vy[j]-=ny*k; }
+      } else if (same) {
+        const f=coh*dt*(1-(d-D)/(C-D));
+        vx[i]+=nx*f; vy[i]+=ny*f; vx[j]-=nx*f; vy[j]-=ny*f;
+      }
+    }
+  }
+  for (let m=0;m<merges.length;m+=2){
+    const from=merges[m], to=merges[m+1]; if (from===to) continue;
+    for (let i=0;i<N;i++) if (grp[i]===from) grp[i]=to;
+    for (let q=m+2;q<merges.length;q++) if (merges[q]===from) merges[q]=to;
+  }
+  // wheel <-> oil
+  for (let k=0;k<NP;k++){ const a=theta+k*Math.PI*2/NP; pc[k]=Math.cos(a); ps[k]=Math.sin(a); }
+  let tau=0; const reach=(WR+R+3)**2, lim=R+PT/2;
+  for (let i=0;i<N;i++){
+    let dx=px[i]-HC.x, dy=py[i]-HC.y;
+    if (dx*dx+dy*dy>reach) continue;
+    const d=Math.hypot(dx,dy);
+    if (d<HUB+R && d>1e-4){
+      const nx=dx/d, ny=dy/d, o=HUB+R-d;
+      px[i]+=nx*o; py[i]+=ny*o; dx+=nx*o; dy+=ny*o;
+      const vn=vx[i]*nx+vy[i]*ny; if (vn<0){ vx[i]-=nx*vn; vy[i]-=ny*vn; }
+    }
+    for (let k=0;k<NP;k++){
+      let t=dx*pc[k]+dy*ps[k]; t=t<HUB?HUB:t>WR?WR:t;
+      const qx=pc[k]*t, qy=ps[k]*t, ex=dx-qx, ey=dy-qy, e2=ex*ex+ey*ey;
+      if (e2<lim*lim){
+        const e=Math.sqrt(e2)||1e-4, nx=ex/e, ny=ey/e, o=lim-e;
+        px[i]+=nx*o; py[i]+=ny*o; dx+=nx*o; dy+=ny*o;
+        const vn=(vx[i]+omega*qy)*nx+(vy[i]-omega*qx)*ny;
+        if (vn<0){ vx[i]-=nx*vn; vy[i]-=ny*vn; tau+=qx*(ny*vn)-qy*(nx*vn); }
+      }
+    }
+  }
+  omega+=tau/INERTIA;
+  stepWork+=Math.abs(tau*omega);
+  const thick=1+3*(1-heat);                // cold, thick oil drags on the paddles; warm oil lets it coast
+  omega-=(W_LIN*thick*omega+W_QUAD*thick*omega*Math.abs(omega))*dt;
+  const cf=W_COULOMB*dt; omega = Math.abs(omega)<=cf ? 0 : omega-Math.sign(omega)*cf;
+  if (omega>16) omega=16; if (omega<-16) omega=-16;
+  theta+=omega*dt;
+  // walls
+  for (let it=0; it<2; it++) for (let i=0;i<N;i++){
+    const x=px[i], y=py[i], d=sdf(x,y)+R; if (d<=0) continue;
+    const e=0.5, gx=sdf(x+e,y)-sdf(x-e,y), gy=sdf(x,y+e)-sdf(x,y-e);
+    const l=Math.hypot(gx,gy)||1, nx=gx/l, ny=gy/l;
+    px[i]=x-nx*d; py[i]=y-ny*d;
+    const vn=vx[i]*nx+vy[i]*ny; if (vn>0){ vx[i]-=nx*vn; vy[i]-=ny*vn; }
+    vx[i]*=WALL_F; vy[i]*=WALL_F;
+  }
+  // each droplet that crosses the wheel's centre line inside the race warms the oil
+  for (let i=0;i<N;i++){
+    if (px[i]>306 && Math.abs(py[i]-HC.y)<56){
+      const sd=py[i]<HC.y?-1:1;
+      if (wheelSide[i]&&sd!==wheelSide[i]){
+        heat=Math.min(1,heat+1/(N*PASSES_TO_HOT));
+        // the paddles slice the oil: everything in one bucket becomes its own new blob
+        const step=Math.PI*2/NP, rel=Math.atan2(py[i]-HC.y,px[i]-HC.x)-theta;
+        const k=((Math.floor(rel/step)%NP)+NP)%NP, rev=Math.floor(theta/(Math.PI*2));
+        grp[i]=1000+(rev+100000)*NP+k;
+      }
+      wheelSide[i]=sd;
+    } else wheelSide[i]=0;
+  }
+  for (let i=0;i<N;i++){
+    if(px[i]<R)px[i]=R; if(px[i]>W-R)px[i]=W-R; if(py[i]<R)py[i]=R; if(py[i]>H-R)py[i]=H-R;
+  }
+}
+
+// ================= RENDERING =================
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+const bg=document.createElement('canvas'), bgx=bg.getContext('2d');
+let scale=1, dpr=1;
+
+function path(g, grow){
+  // returns draw ops for every shape grown by `grow`
+  for (const pts of [tankA,tankB]){
+    g.beginPath(); pts.forEach((p,i)=>i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1])); g.closePath();
+    g.fill(); if (grow>0){ g.lineWidth=grow*2; g.stroke(); }
+  }
+  for (const t of tubes){
+    g.beginPath(); t.pts.forEach((p,i)=>i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1]));
+    g.lineWidth=(t.w+grow)*2; g.stroke();
+  }
+}
+function shapes(g, grow, style){ g.fillStyle=style; g.strokeStyle=style; g.lineJoin='round'; g.lineCap='round'; path(g,grow); }
+
+function drawBG(){
+  bg.width=Math.round(W*scale*dpr); bg.height=Math.round(H*scale*dpr);
+  const g=bgx; g.setTransform(scale*dpr,0,0,scale*dpr,0,0);
+  // purple anodized plate
+  const body=g.createLinearGradient(0,0,W,H);
+  body.addColorStop(0,'#4a2a7a'); body.addColorStop(.45,'#2c1650'); body.addColorStop(1,'#3a2066');
+  g.fillStyle=body; g.beginPath(); g.roundRect ? g.roundRect(0,0,W,H,24) : g.rect(0,0,W,H); g.fill();
+  for (let y=2;y<H;y+=3){ g.fillStyle=`rgba(255,235,255,${0.01+Math.random()*0.022})`; g.fillRect(4,y,W-8,1); }
+  for (const [sx,sy] of [[10,10],[W-10,10],[10,H-10],[W-10,H-10],[10,H/2],[W-10,H/2]]){
+    const sg=g.createRadialGradient(sx-1.5,sy-1.5,.5,sx,sy,5);
+    sg.addColorStop(0,'#e3d4ff'); sg.addColorStop(1,'#5a3d8a');
+    g.fillStyle=sg; g.beginPath(); g.arc(sx,sy,4.5,0,Math.PI*2); g.fill();
+    g.strokeStyle='#2a1745'; g.lineWidth=1.2; g.beginPath(); g.moveTo(sx-3,sy-3); g.lineTo(sx+3,sy+3); g.stroke();
+  }
+  // dry wheel recess
+  g.fillStyle='#160a29'; g.beginPath(); g.arc(HC.x,HC.y,HR,0,Math.PI*2); g.fill();
+  g.strokeStyle='rgba(214,186,255,.55)'; g.lineWidth=2; g.stroke();
+  shapes(g,5,'#1a0d2e');                     // machined groove shadow
+  shapes(g,2.4,'rgba(214,186,255,.85)');     // bright purple lip
+  // clear gray glass + water layer
+  const L=document.createElement('canvas'); L.width=bg.width; L.height=bg.height;
+  const l=L.getContext('2d'); l.setTransform(scale*dpr,0,0,scale*dpr,0,0);
+  const water=l.createLinearGradient(0,0,W,H);
+  water.addColorStop(0,'#e4e6ea'); water.addColorStop(.5,'#cfd3d8'); water.addColorStop(1,'#bfc4cb');
+  shapes(l,0,water);
+  l.globalCompositeOperation='source-atop';
+  // glass sheen stripes
+  l.save(); l.rotate(-0.5);
+  for (let k=-6;k<14;k++){
+    const x=k*90; const s=l.createLinearGradient(x,0,x+40,0);
+    s.addColorStop(0,'rgba(255,255,255,0)'); s.addColorStop(.5,'rgba(255,255,255,.35)'); s.addColorStop(1,'rgba(255,255,255,0)');
+    l.fillStyle=s; l.fillRect(x,-400,40,2000);
+  }
+  l.restore();
+  // inner shadow along the purple walls
+  l.globalCompositeOperation='source-atop';
+  l.strokeStyle='rgba(60,30,110,.18)'; l.lineJoin='round'; l.lineCap='round';
+  l.save(); l.filter='blur(3px)'; l.fillStyle='rgba(0,0,0,0)';
+  for (const t of tubes){ l.beginPath(); t.pts.forEach((p,i)=>i?l.lineTo(p[0],p[1]):l.moveTo(p[0],p[1])); l.lineWidth=t.w*2+6; l.stroke(); }
+  l.restore();
+  g.setTransform(1,0,0,1,0,0); g.drawImage(L,0,0);
+  g.setTransform(scale*dpr,0,0,scale*dpr,0,0);
+  g.fillStyle='rgba(225,205,255,.45)'; g.font='bold 9px ui-monospace,monospace';
+  g.fillText('TANK A',28,34); g.fillText('TANK B',300,872);
+}
+
+// ---- lava-lamp metaballs: field splat -> threshold -> shaded image ----
+const CS=2, GW=W/CS, GH=H/CS;
+const field=new Float32Array(GW*GH), mask=new Uint8Array(GW*GH);
+for (let j=0;j<GH;j++) for (let i=0;i<GW;i++) mask[j*GW+i]= sdf((i+.5)*CS,(j+.5)*CS)<1 ? 1:0;
+const oc=document.createElement('canvas'); oc.width=GW; oc.height=GH;
+const ox=oc.getContext('2d'); const img=ox.createImageData(GW,GH); const pix=new Uint32Array(img.data.buffer);
+const KR=14, KR2=KR*KR, KC=Math.ceil(KR/CS);
+function lerp(a,b,t){ return a+(b-a)*t; }
+const tf=new Float32Array(GW*GH), order=new Int32Array(N);
+function drawOil(){
+  field.fill(0);
+  for (let i=0;i<N;i++) order[i]=i;
+  order.sort((a,b)=>grp[a]-grp[b]);
+  let s0=0;
+  while (s0<N){
+    let s1=s0; const g=grp[order[s0]];
+    let bi0=GW, bi1=0, bj0=GH, bj1=0;
+    while (s1<N && grp[order[s1]]===g){
+      const n=order[s1], cx=px[n]/CS, cy=py[n]/CS, ci=cx|0, cj=cy|0;
+      const i0=Math.max(0,ci-KC), i1=Math.min(GW-1,ci+KC), j0=Math.max(0,cj-KC), j1=Math.min(GH-1,cj+KC);
+      if(i0<bi0)bi0=i0; if(i1>bi1)bi1=i1; if(j0<bj0)bj0=j0; if(j1>bj1)bj1=j1;
+      for (let j=j0;j<=j1;j++){
+        const dy=((j+.5)-cy)*CS, row=j*GW;
+        for (let i=i0;i<=i1;i++){
+          const dx=((i+.5)-cx)*CS, d2=dx*dx+dy*dy;
+          if (d2<KR2){ const q=1-d2/KR2; tf[row+i]+=q*q*q; }
+        }
+      }
+      s1++;
+    }
+    for (let j=bj0;j<=bj1;j++){ const row=j*GW;
+      for (let i=bi0;i<=bi1;i++){ const k=row+i; if (tf[k]>field[k]) field[k]=tf[k]; tf[k]=0; } }
+    s0=s1;
+  }
+  const T0=0.30, T1=0.48, sB=heat;
+  for (let j=1;j<GH-1;j++){
+    const row=j*GW;
+    for (let i=1;i<GW-1;i++){
+      const k=row+i, f=field[k];
+      if (f<T0||!mask[k]){ pix[k]=0; continue; }
+      let a=(f-T0)/(T1-T0); a=a>1?1:a; a=a*a*(3-2*a);
+      // fake surface normal from the field gradient -> waxy lava-lamp lighting
+      const nx=field[k+1]-field[k-1], ny=field[k+GW]-field[k-GW];
+      let light=(-nx*0.6-ny*0.8)*1.4; light=light>1?1:light<-1?-1:light;
+      const depth=Math.min(1,(f-T1)/1.6);
+      let r=lerp(20,70,depth)+60*sB, g=lerp(70,150,depth)+70*sB, b=lerp(190,255,depth); if(g>255)g=255;
+      if (light>0){ const s=light*light*0.9; r=lerp(r,235,s); g=lerp(g,245,s); b=lerp(b,255,s); }
+      else { const s=-light*0.45; r*=1-s; g*=1-s; b*=1-s*0.6; }
+      const A=(a*235+20)|0;
+      pix[k]=(A<<24)|((b|0)<<16)|((g|0)<<8)|(r|0);
+    }
+  }
+  ox.putImageData(img,0,0);
+  ctx.imageSmoothingEnabled=true;
+  ctx.drawImage(oc,0,0,W,H);
+}
+
+function drawWheel(){
+  ctx.save(); ctx.translate(HC.x,HC.y); ctx.rotate(theta); ctx.lineCap='round';
+  ctx.strokeStyle='rgba(110,60,190,.6)'; ctx.lineWidth=1.6;
+  ctx.beginPath(); ctx.arc(0,0,30,0,Math.PI*2); ctx.stroke();
+  ctx.strokeStyle='#5b2db0'; ctx.lineWidth=PT;
+  for (let k=0;k<NP;k++){ const a=k*Math.PI*2/NP, c=Math.cos(a), s=Math.sin(a);
+    ctx.beginPath(); ctx.moveTo(c*HUB,s*HUB); ctx.lineTo(c*WR,s*WR); ctx.stroke(); }
+  ctx.strokeStyle='rgba(220,200,255,.7)'; ctx.lineWidth=1;
+  for (let k=0;k<NP;k++){ const a=k*Math.PI*2/NP-0.035, c=Math.cos(a), s=Math.sin(a);
+    ctx.beginPath(); ctx.moveTo(c*(HUB+2),s*(HUB+2)); ctx.lineTo(c*(WR-1),s*(WR-1)); ctx.stroke(); }
+  const hg=ctx.createRadialGradient(-3,-3,1,0,0,HUB);
+  hg.addColorStop(0,'#eadcff'); hg.addColorStop(1,'#4a2390');
+  ctx.fillStyle=hg; ctx.beginPath(); ctx.arc(0,0,HUB,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1a0d2e'; ctx.beginPath(); ctx.arc(0,0,3,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#eadcff'; ctx.fillRect(-1,-HUB+2,2,5);
+  ctx.restore();
+}
+
+function resize(){
+  dpr=Math.min(window.devicePixelRatio||1,3);
+  scale=Math.min(innerWidth/W,(innerHeight-104)/H);
+  cv.width=Math.round(W*scale*dpr); cv.height=Math.round(H*scale*dpr);
+  cv.style.width=(W*scale)+'px'; cv.style.height=(H*scale)+'px';
+  drawBG();
+}
+function draw(){
+  ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,cv.width,cv.height); ctx.drawImage(bg,0,0);
+  ctx.setTransform(scale*dpr,0,0,scale*dpr,0,0);
+  drawWheel(); drawOil();
+}
+
+// ================= GAME + SCOREBOARD =================
+const $=id=>document.getElementById(id);
+const KEY='oilwheel.scores.v1';
+function loadScores(){ try{ return JSON.parse(localStorage.getItem(KEY))||[]; }catch(_){ return []; } }
+function saveScores(s){ try{ localStorage.setItem(KEY,JSON.stringify(s)); }catch(_){} }
+const fmtT=t=>{ const d=Math.floor(t*10), m=Math.floor(d/600), r=d%600; return m? m+'m '+String(Math.floor(r/10)).padStart(2,'0')+'.'+(r%10)+'s' : (d/10).toFixed(1)+'s'; };
+function table(el, scores, highlight, limit){
+  let h='<tr><th>#</th><th>TIME</th><th>ENERGY</th><th>REVS</th><th>DATE</th></tr>';
+  if (!scores.length) h+='<tr><td colspan="5" class="muted">No runs yet</td></tr>';
+  scores.slice(0,limit).forEach((s,i)=>{
+    const d=new Date(s.date);
+    h+=`<tr class="${s.date===highlight?'me':''}"><td>${i+1}</td><td>${fmtT(s.t)}</td><td>${s.energy.toFixed(0)} J</td><td>${s.revs.toFixed(1)}</td><td>${d.getMonth()+1}/${d.getDate()}</td></tr>`;
+  });
+  el.innerHTML=h;
+}
+function hideCards(){ ['startCard','overCard','scoreCard','helpCard'].forEach(id=>$(id).classList.add('hide')); }
+function startRun(){
+  state='run'; stillTime=0;
+  run={t:0, energy:0, revs:0, peak:0, flips:1, perfect:0, date:Date.now()};
+  heat=0;
+  hideCards();
+  if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(()=>{});
+}
+function endRun(){
+  state='over';
+  const scores=loadScores(); scores.push(run);
+  scores.sort((a,b)=>b.t-a.t); scores.splice(25); saveScores(scores);
+  const rank=scores.findIndex(s=>s.date===run.date);
+  $('oTime').textContent=fmtT(run.t);
+  $('oRank').textContent= rank===0 ? '★ NEW LONGEST RUN ★' : rank>0 ? `Rank #${rank+1} of your runs` : 'Not in your top 25';
+  $('oEnergy').textContent=run.energy.toFixed(0)+' J';
+  $('oRevs').textContent=run.revs.toFixed(1);
+  $('oPeak').textContent=Math.round(run.peak);
+  $('oFlips').textContent=run.perfect+'/'+(run.flips-1);
+  table($('oTable'),scores,run.date,5);
+  hideCards(); $('overCard').classList.remove('hide');
+}
+let toastTimer=0;
+function toast(big,small){
+  const t=$('toast'); t.innerHTML=big+(small?'<small>'+small+'</small>':''); t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),1400);
+}
+// c = share of the oil that had reached its tank when you flipped
+function onFlip(c, settled){
+  if (state!=='run'){ startRun(); return; }
+  run.flips++;
+  let label, gain;
+  if (c>=0.9 && settled<=4){ label='PERFECT FLIP'; gain=0.05; run.perfect++; }
+  else if (c>=0.9){ label='LATE'; gain=0.01; }
+  else if (c>=0.6){ label='GOOD'; gain=0.025; }
+  else { label='EARLY'; gain=0; }
+  heat=Math.min(1,heat+gain);
+  toast(label,'heat '+Math.round(heat*100)+'%');
+}
+
+// ================= SENSORS =================
+let lastOri=0, lastMot=0, sensorLive=false;
+const isIOS=/iPhone|iPad|iPod/.test(navigator.userAgent);
+function screenAngle(){ return ((screen.orientation&&screen.orientation.angle)||window.orientation||0)*Math.PI/180; }
+function feed(gx,gy){
+  const a=-screenAngle(), c=Math.cos(a), s=Math.sin(a);
+  gRaw.x=gx*c-gy*s; gRaw.y=gx*s+gy*c;
+}
+// The ACCELEROMETER (devicemotion) is the main tilt source: it measures gravity directly, so a full
+// flip — even rolling the phone over sideways like a steering wheel — stays smooth. The angle reading
+// (deviceorientation) jumps around when the phone stands on its edge, so it's only a backup.
+// Shaking the phone also shakes the accelerometer, so the oil sloshes like it's really in there.
+addEventListener('deviceorientation',e=>{
+  if (e.beta==null) return;
+  lastOri=performance.now();
+  if (performance.now()-lastMot<600) return;          // accelerometer preferred when present
+  const b=e.beta*Math.PI/180, gm=(e.gamma||0)*Math.PI/180;
+  feed(Math.cos(b)*Math.sin(gm), Math.sin(b));
+});
+addEventListener('devicemotion',e=>{
+  const a=e.accelerationIncludingGravity; if (!a||a.x==null||a.y==null) return;
+  if (!a.x && !a.y && !a.z) return;                   // some phones send all-zero readings: ignore them
+  lastMot=performance.now();
+  let gx=-a.x/9.81, gy=a.y/9.81; if (isIOS){ gx=-gx; gy=-gy; }
+  const m=Math.hypot(gx,gy); if (m>1.6){ gx*=1.6/m; gy*=1.6/m; }   // allow a little slosh, cap hard jolts
+  feed(gx,gy);
+});
+// Keep the screen from spinning to landscape mid-flip (only allowed once installed / full screen).
+function lockPortrait(){ try{ screen.orientation&&screen.orientation.lock&&screen.orientation.lock('portrait').catch(()=>{}); }catch(_){} }
+lockPortrait();
+async function askPermission(){
+  try{ if (typeof DeviceOrientationEvent!=='undefined'&&DeviceOrientationEvent.requestPermission) await DeviceOrientationEvent.requestPermission(); }catch(_){}
+  try{ if (typeof DeviceMotionEvent!=='undefined'&&DeviceMotionEvent.requestPermission) await DeviceMotionEvent.requestPermission(); }catch(_){}
+}
+function sensorCheck(){
+  const now=performance.now();
+  const live = now-lastOri<1500 || now-lastMot<1500;
+  if (live!==sensorLive || !sensorCheck.init){
+    sensorCheck.init=true; sensorLive=live;
+    const st=$('tiltStat');
+    st.textContent = live ? 'TILT: LIVE' : 'TILT: tap to enable';
+    st.className = live ? 'live' : 'dead';
+    $('flip').style.display = live ? 'none' : '';
+    $('startTilt').textContent = live ? 'Motion sensor connected ✓' : 'No motion signal yet — tap “TILT” below to enable it.';
+    if (live && phiTarget!==0){ phiFrom=phi; phiTarget=0; phiT=0; }   // hand control back to the real phone
+  }
+}
+$('tiltStat').onclick=async()=>{
+  await askPermission();
+  setTimeout(()=>{ if (!sensorLive){ hideCards(); $('helpCard').classList.remove('hide'); } },1500);
+};
+$('startBtn').onclick=async()=>{ $('startCard').classList.add('hide'); await askPermission(); lockPortrait(); };
+// ---- install as an app ----
+// Chrome fires 'beforeinstallprompt' when the page can be installed. We keep it and show our own
+// "Install app" button; tapping it opens Chrome's install box.
+if ('serviceWorker' in navigator && location.protocol!=='file:'){
+  addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
+let installEvt=null;
+addEventListener('beforeinstallprompt',e=>{ e.preventDefault(); installEvt=e; $('installBtn').hidden=false; });
+addEventListener('appinstalled',()=>{ installEvt=null; $('installBtn').hidden=true; });
+$('installBtn').onclick=async()=>{ if (!installEvt) return; installEvt.prompt(); try{ await installEvt.userChoice; }catch(_){} installEvt=null; $('installBtn').hidden=true; };
+$('helpClose').onclick=()=>$('helpCard').classList.add('hide');
+$('overClose').onclick=()=>$('overCard').classList.add('hide');
+$('scoresBtn').onclick=()=>{ hideCards(); table($('sTable'),loadScores(),null,25); $('scoreCard').classList.remove('hide'); };
+$('scoreClose').onclick=()=>$('scoreCard').classList.add('hide');
+$('scoreClear').onclick=()=>{ if ($('scoreClear').dataset.arm){ saveScores([]); table($('sTable'),[],null,25); $('scoreClear').textContent='Clear'; delete $('scoreClear').dataset.arm; }
+  else { $('scoreClear').dataset.arm=1; $('scoreClear').textContent='Tap again to clear'; } };
+$('flip').onclick=()=>{ phiFrom=phi; phiTarget=phiTarget<1?Math.PI:0; phiT=0; };
+// laptop keys: Space / F / ↑ / ↓ flip the tank, R resets (only when there's no real tilt sensor)
+addEventListener('keydown',e=>{
+  if (e.repeat) return;
+  const k=e.key.toLowerCase();
+  if ((k===' '||k==='f'||k==='arrowup'||k==='arrowdown') && !sensorLive){ e.preventDefault(); $('flip').onclick(); }
+  else if (k==='r'){ $('reset').onclick(); }
+});
+$('reset').onclick=()=>{ state='ready'; run=null; omega=0; heat=0; fillTank(canvasGravity().y>=0); hideCards(); };
+
+// ================= LOOP =================
+let hudTick=0;
+function hud(dt){
+  const power=stepWork/Math.max(dt,1e-3)*1e-4; stepWork=0;
+  powerS+=(power-powerS)*0.12;
+  const rpm=Math.abs(omega)*60/(Math.PI*2);
+  if (state==='run'){
+    if (rpm>0.5) run.t+=dt;
+    run.energy+=power*dt; run.revs+=Math.abs(omega)*dt/(Math.PI*2);
+    if (rpm>run.peak) run.peak=rpm;
+    // over only once the wheel has stopped AND the oil has finished its trip (or is truly stuck)
+    if (rpm<0.5 && arrived>=0.9) stillTime+=dt; else if (rpm<0.5 && meanSpeed<0.6) stillTime+=dt/4; else stillTime=0;
+    if (stillTime>3) endRun();
+  }
+  if (++hudTick%5) return;
+  $('time').textContent = state==='run' ? fmtT(run.t) : run ? fmtT(run.t) : '0.0s';
+  $('rpm').textContent=Math.round(rpm);
+  $('surge').textContent=Math.round(heat*100)+'%';
+  $('pow').textContent=powerS.toFixed(1);
+  $('barFill').style.width=Math.min(100,powerS*3)+'%';
+  $('energy').textContent = run ? run.energy.toFixed(0) : '0';
+  $('revs').textContent = run ? run.revs.toFixed(1) : '0';
+}
+function detectFlip(dt){
+  const g=canvasGravity();
+  let a=0,b=0; for (let i=0;i<N;i++){ if (py[i]<160) a++; else if (py[i]>745) b++; }
+  const c=(side===1?a:b)/N; arrived=c;
+  settledFor = c>=0.9 ? settledFor+dt : 0;
+  const s = g.y>0.5 ? 1 : g.y<-0.5 ? -1 : side;
+  if (s!==side){ onFlip(c,settledFor); side=s; settledFor=0; }
+  if (!hudFlipped && gDisp.y<-0.4) hudFlipped=true;
+  else if (hudFlipped && gDisp.y>0.4) hudFlipped=false;
+  $('hud').classList.toggle('flipped',hudFlipped);
+}
+
+addEventListener('resize',resize);
+resize(); fillTank(true);
+let last=performance.now(), acc=0;
+function frame(now){
+  const dt=Math.min((now-last)/1000,0.05); last=now;
+  const k=1-Math.exp(-dt*12);
+  gDisp.x+=(gRaw.x-gDisp.x)*k; gDisp.y+=(gRaw.y-gDisp.y)*k;
+  if (phiT<1){
+    phiT=Math.min(1,phiT+dt/1.1);
+    const e=phiT<.5?2*phiT*phiT:1-Math.pow(-2*phiT+2,2)/2;
+    phi=phiFrom+(phiTarget-phiFrom)*e;
+    cv.style.transform=`rotate(${phi}rad)`;
+  }
+  acc+=dt;
+  while (acc>=SUB){ step(SUB); acc-=SUB; }
+  // oil movement = how far the droplets actually travelled in the last half second
+  snapT+=dt;
+  if (snapT>=0.5){
+    let s=0; for (let i=0;i<N;i++){ s+=Math.hypot(px[i]-snapX[i],py[i]-snapY[i]); snapX[i]=px[i]; snapY[i]=py[i]; }
+    meanSpeed=s/N/snapT; snapT=0;
+  }
+  sensorCheck(); detectFlip(dt);
+  heat*=Math.exp(-dt/400);   // left alone, the oil slowly cools back down
+  draw(); hud(dt);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

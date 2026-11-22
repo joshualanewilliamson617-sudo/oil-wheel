@@ -1,0 +1,18 @@
+{
+  "id": "./",
+  "name": "Oil Wheel",
+  "short_name": "Oil Wheel",
+  "description": "Flip your phone to pour lava-lamp oil through a paddle wheel. Keep it spinning as long as you can.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#120a1f",
+  "theme_color": "#120a1f",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
